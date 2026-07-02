@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  ml:
+    build: .
+    container_name: mon-projet-ml
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./src:/app/src
+      - ./configs:/app/configs
+    command: python -m src.models.train_model
+    # Décommente pour utiliser un GPU (nécessite nvidia-container-toolkit) :
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  notebook:
+    build: .
+    container_name: mon-projet-ml-notebook
+    ports:
+      - "8888:8888"
+    volumes:
+      - .:/app
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root

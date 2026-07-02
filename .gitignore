@@ -1,0 +1,62 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+
+# --- Environnements virtuels ---
+venv/
+.venv/
+env/
+.env
+*.env
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# --- Données ---
+data/raw/*
+data/interim/*
+data/processed/*
+data/external/*
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+!data/external/.gitkeep
+
+# --- Modèles entraînés / checkpoints ---
+models/*
+!models/.gitkeep
+*.pkl
+*.pt
+*.pth
+*.h5
+*.ckpt
+*.onnx
+*.joblib
+
+# --- Logs & expériences ---
+logs/
+mlruns/
+wandb/
+runs/
+*.log
+
+# --- Rapports générés ---
+reports/figures/*
+!reports/figures/.gitkeep
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- DVC (si utilisé) ---
+.dvc/cache
+.dvc/tmp
