@@ -14,13 +14,51 @@ pip install -r requirements.txt
 
 ```
 mon-projet-ml/
-├── data/            # Données (raw, interim, processed, external)
-├── notebooks/       # Notebooks d'exploration
-├── src/             # Code source (data, features, models, evaluation, visualization)
-├── models/          # Modèles entraînés
-├── reports/         # Rapports et figures générés
-├── configs/         # Fichiers de configuration
-└── tests/           # Tests unitaires
+│
+├── README.md                  # Présentation du projet, installation, usage
+├── .gitignore                 # Exclure data brute, venv, checkpoints, etc.
+├── requirements.txt           # ou environment.yml / pyproject.toml
+├── setup.py                   # si le projet est packagé
+├── Makefile                   # commandes courantes (train, test, lint...)
+│
+├── data/
+│   ├── raw/                   # Données brutes, jamais modifiées
+│   ├── interim/                # Données intermédiaires (nettoyage partiel)
+│   ├── processed/             # Données prêtes pour l'entraînement
+│   └── external/               # Données provenant de sources tierces
+│
+├── notebooks/                 # Jupyter notebooks (exploration, EDA)
+│   └── 01_exploration.ipynb
+│
+├── src/                        # Code source du projet
+│   ├── __init__.py
+│   ├── data/                   # Scripts de chargement / prétraitement
+│   │   ├── make_dataset.py
+│   │   └── preprocessing.py
+│   ├── features/               # Feature engineering
+│   │   └── build_features.py
+│   ├── models/                 # Entraînement, prédiction
+│   │   ├── train_model.py
+│   │   └── predict_model.py
+│   ├── evaluation/              # Métriques, validation
+│   │   └── evaluate.py
+│   └── visualization/           # Génération de graphiques
+│       └── visualize.py
+│
+├── models/                     # Modèles entraînés sauvegardés (souvent ignoré par git)
+│   └── model_v1.pkl
+│
+├── reports/                    # Résultats, figures, rapports
+│   ├── figures/
+│   └── final_report.md
+│
+├── configs/                    # Fichiers de configuration (YAML/JSON)
+│   └── config.yaml
+│
+├── tests/                      # Tests unitaires
+│   └── test_preprocessing.py
+│
+└── docs/                       # Documentation complémentaire
 ```
 
 ## Usage
