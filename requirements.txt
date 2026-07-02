@@ -8,3 +8,4 @@ pyyaml
 pytest
 mlflow
 huggingface_hub
+joblib

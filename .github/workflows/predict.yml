@@ -1,0 +1,35 @@
+name: Scheduled Prediction
+
+on:
+  schedule:
+    # Toutes les heures, à ajuster selon le besoin métier
+    - cron: "0 * * * *"
+  workflow_dispatch: {}  # permet aussi un déclenchement manuel depuis l'interface GitHub
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Générer les prédictions
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
+        run: python -m src.models.predict_model --source hub
+
+      - name: Publier les prédictions comme artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: predictions
+          path: reports/predictions.csv
+          retention-days: 30

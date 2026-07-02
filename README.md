@@ -27,7 +27,7 @@ mon-projet-ml/
 
 ```bash
 python -m src.data.make_dataset
-python -m src.models.train_model
+python -m src.models.train
 python -m src.models.predict_model
 ```
 

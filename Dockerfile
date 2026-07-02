@@ -21,4 +21,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # --- Commande par défaut ---
-CMD ["python", "-m", "src.models.train_model"]
+CMD ["python", "-m", "src.models.train"]

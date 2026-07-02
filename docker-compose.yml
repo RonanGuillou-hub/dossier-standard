@@ -10,7 +10,7 @@ services:
       - ./reports:/app/reports
       - ./src:/app/src
       - ./configs:/app/configs
-    command: python -m src.models.train_model
+    command: python -m src.models.train
     # Décommente pour utiliser un GPU (nécessite nvidia-container-toolkit) :
     # deploy:
     #   resources:

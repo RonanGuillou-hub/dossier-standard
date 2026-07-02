@@ -16,7 +16,7 @@ data:
 	python -m src.data.make_dataset
 
 train:
-	python -m src.models.train_model
+	python -m src.models.train
 
 predict:
 	python -m src.models.predict_model
