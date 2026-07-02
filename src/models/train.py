@@ -112,6 +112,7 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
 NUMERIC_COLS = [
     "age", "revenu", "anciennete_mois",
     "revenu_par_annee_anciennete", "revenu_par_age",
+    "temperature_max", "temperature_min", "precipitation",      # données météo ajouté via le dossier external
 ]
 CATEGORICAL_COLS = [
     "categorie", "region",

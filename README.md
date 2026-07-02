@@ -23,9 +23,9 @@ mon-projet-ml/
 │
 ├── data/
 │   ├── raw/                   # Données brutes, jamais modifiées
-│   ├── interim/                # Données intermédiaires (nettoyage partiel)
-│   ├── processed/             # Données prêtes pour l'entraînement
-│   └── external/               # Données provenant de sources tierces
+│   ├── interim/               # Données intermédiaires (nettoyage partiel) ex: après jointure + dédoublonnage , evite de refaire raw
+│   ├── processed/             # Données prêtes pour l'entraînement, après feature engineering final, imputation, encodage
+│   └── external/              # Données provenant de sources tierces, des données qui viennent de l'extérieur de ton pipeline principal
 │
 ├── notebooks/                 # Jupyter notebooks (exploration, EDA)
 │   └── 01_exploration.ipynb
@@ -60,6 +60,10 @@ mon-projet-ml/
 │
 └── docs/                       # Documentation complémentaire
 ```
+
+
+
+
 
 ## Usage
 

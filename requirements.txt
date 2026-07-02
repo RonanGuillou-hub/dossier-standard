@@ -9,3 +9,4 @@ pytest
 mlflow
 huggingface_hub
 joblib
+requests

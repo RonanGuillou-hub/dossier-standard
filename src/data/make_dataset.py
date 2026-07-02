@@ -21,21 +21,20 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from typing import Literal, List, Dict
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-RAW_DATA_DIR = Path("data/raw")
-PROCESSED_DATA_DIR = Path("data/processed")
-
-REQUIRED_COLUMNS = ["age", "revenu", "anciennete_mois", "categorie", "region", "cible"]
-
-RANDOM_STATE = 42
-
+RAW_DATA_DIR            = Path("data/raw")
+PROCESSED_DATA_DIR      = Path("data/processed")
+RANDOM_STATE            = 42
 
 # ---------------------------------------------------------------------------
 # 1. GÉNÉRATION D'UN DATASET SYNTHÉTIQUE "SALE" (à remplacer par un vrai chargement)
 # ---------------------------------------------------------------------------
+REQUIRED_COLUMNS        = ["age", "revenu", "anciennete_mois", "categorie", "region", "cible"]
+
 def generate_dirty_dataset(n: int = 500, random_state: int = RANDOM_STATE) -> pd.DataFrame:
     """
     Crée un dataset avec des défauts typiques : NaN, doublons, valeurs
@@ -132,6 +131,115 @@ def save_processed_data(df: pd.DataFrame, output_path: Path) -> Path:
     output_file = output_path / "dataset_clean.csv"
     df.to_csv(output_file, index=False)
     return output_file
+
+# ---------------------------------------------------------------------------
+# 3. DONNÉES EXTERNES : MÉTÉO (appel API à chaque exécution)
+# ---------------------------------------------------------------------------
+# Coordonnées approximatives associées à chaque région du dataset.
+# À adapter/étendre selon les vraies régions de ton projet.
+REGION_COORDINATES = {
+    "Nord": {"latitude": 50.63, "longitude": 3.06},    # Lille
+    "Sud": {"latitude": 43.30, "longitude": 5.37},     # Marseille
+    "Est": {"latitude": 48.58, "longitude": 7.75},     # Strasbourg
+    "Ouest": {"latitude": 47.22, "longitude": -1.55},  # Nantes
+}
+
+OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+EXTERNAL_DATA_CACHE = Path("data/external/")
+
+def fetch_weather_for_region(region: Literal["Nord", "Sud", "Est", "Ouest"], start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    Appelle l'API Open-Meteo (gratuite, sans clé) pour récupérer la météo
+    journalière d'une région sur une plage de dates donnée.
+
+    Remplace REGION_COORDINATES et cette fonction par ton propre fournisseur
+    météo si besoin (nécessitant potentiellement une clé API — dans ce cas,
+    passe-la via une variable d'environnement, jamais en dur dans le code).
+    """
+    import requests  # import local pour ne pas alourdir les autres scripts qui n'en ont pas besoin
+
+    coords = REGION_COORDINATES.get(region)
+    if coords is None:
+        raise ValueError(f"Région inconnue : {region!r} — ajoute ses coordonnées dans REGION_COORDINATES")
+
+    params = {
+        "latitude": coords["latitude"],
+        "longitude": coords["longitude"],
+        "start_date": start_date,
+        "end_date": end_date,
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+        "timezone": "Europe/Paris",
+    }
+
+    response = requests.get(OPEN_METEO_ARCHIVE_URL, params=params, timeout=30)
+    response.raise_for_status()
+    daily = response.json()["daily"]
+
+    return pd.DataFrame({
+        "date": pd.to_datetime(daily["time"]),
+        "region": region,
+        "temperature_max": daily["temperature_2m_max"],
+        "temperature_min": daily["temperature_2m_min"],
+        "precipitation": daily["precipitation_sum"],
+    })
+
+
+def fetch_external_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Récupère la météo pour toutes les combinaisons (région, plage de dates)
+    présentes dans le dataset principal. Appelée à chaque exécution de
+    make_dataset.py, donc toujours à jour — pas de dépendance à un cache
+    pour fonctionner.
+    """
+    
+    import os
+    from datetime import datetime
+
+    start_date = df["date"].min().strftime("%Y-%m-%d")
+    end_date = df["date"].max().strftime("%Y-%m-%d")
+
+    frames = []
+    for region in df["region"].dropna().unique():
+        logger.info("Récupération météo pour %s (%s → %s)", region, start_date, end_date)
+        try:
+            frames.append(fetch_weather_for_region(region, start_date, end_date))
+        except Exception as e:
+            logger.warning("Échec de récupération météo pour %s : %s", region, e)
+
+    if not frames:
+        raise RuntimeError("Aucune donnée météo récupérée — vérifie la connectivité à l'API Open-Meteo.")
+
+    external_df = pd.concat(frames, ignore_index=True)
+
+    # Archive le dataset
+    EXTERNAL_DATA_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    archive_path = os.path.join (EXTERNAL_DATA_CACHE, datetime.year, datetime.month, datetime.day)
+    archive_file = os.path.join (archive_path, f"open_meteo_{datetime.hour}{datetime.minute}{datetime.second}.csv")
+    external_df.to_csv(EXTERNAL_DATA_CACHE, index=False)
+
+    return external_df
+
+
+def merge_external_data(df: pd.DataFrame, external_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fusionne le dataset principal avec les données météo, sur (date, région).
+
+    Une jointure comme celle-ci reste hors du pipeline sklearn : elle est
+    déterministe, ne dépend d'aucune statistique apprise sur le train, et
+    ne crée donc pas de fuite de données.
+    """
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    external_df = external_df.copy()
+    external_df["date"] = pd.to_datetime(external_df["date"])
+
+    merged = df.merge(external_df, on=["date", "region"], how="left")
+
+    missing = merged["temperature_max"].isna().sum()
+    if missing > 0:
+        logger.warning("%d lignes sans correspondance météo après fusion", missing)
+
+    return merged
 
 
 def main():
