@@ -1,0 +1,27 @@
+name: Trigger Training
+
+on:
+  schedule:
+    # Tous les jours à 3h du matin (UTC)
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}  # permet aussi un déclenchement manuel depuis l'interface GitHub
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installer les dépendances
+        run: pip install huggingface_hub
+
+      - name: Déclencher le job d'entraînement sur HuggingFace
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python trigger_job.py

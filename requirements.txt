@@ -6,3 +6,5 @@ seaborn
 jupyter
 pyyaml
 pytest
+mlflow
+huggingface_hub
