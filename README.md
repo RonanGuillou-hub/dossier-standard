@@ -14,56 +14,14 @@ pip install -r requirements.txt
 
 ```
 mon-projet-ml/
-│
-├── README.md                  # Présentation du projet, installation, usage
-├── .gitignore                 # Exclure data brute, venv, checkpoints, etc.
-├── requirements.txt           # ou environment.yml / pyproject.toml
-├── setup.py                   # si le projet est packagé
-├── Makefile                   # commandes courantes (train, test, lint...)
-│
-├── data/
-│   ├── raw/                   # Données brutes, jamais modifiées
-│   ├── interim/               # Données intermédiaires (nettoyage partiel) ex: après jointure + dédoublonnage , evite de refaire raw
-│   ├── processed/             # Données prêtes pour l'entraînement, après feature engineering final, imputation, encodage
-│   └── external/              # Données provenant de sources tierces, des données qui viennent de l'extérieur de ton pipeline principal
-│
-├── notebooks/                 # Jupyter notebooks (exploration, EDA)
-│   └── 01_exploration.ipynb
-│
-├── src/                        # Code source du projet
-│   ├── __init__.py
-│   ├── data/                   # Scripts de chargement / prétraitement
-│   │   ├── make_dataset.py
-│   │   └── preprocessing.py
-│   ├── features/               # Feature engineering
-│   │   └── build_features.py
-│   ├── models/                 # Entraînement, prédiction
-│   │   ├── train_model.py
-│   │   └── predict_model.py
-│   ├── evaluation/              # Métriques, validation
-│   │   └── evaluate.py
-│   └── visualization/           # Génération de graphiques
-│       └── visualize.py
-│
-├── models/                     # Modèles entraînés sauvegardés (souvent ignoré par git)
-│   └── model_v1.pkl
-│
-├── reports/                    # Résultats, figures, rapports
-│   ├── figures/
-│   └── final_report.md
-│
-├── configs/                    # Fichiers de configuration (YAML/JSON)
-│   └── config.yaml
-│
-├── tests/                      # Tests unitaires
-│   └── test_preprocessing.py
-│
-└── docs/                       # Documentation complémentaire
+├── data/            # Données (raw, interim, processed, external)
+├── notebooks/       # Notebooks d'exploration
+├── src/             # Code source (data, features, models, evaluation, visualization)
+├── models/          # Modèles entraînés
+├── reports/         # Rapports et figures générés
+├── configs/         # Fichiers de configuration
+└── tests/           # Tests unitaires
 ```
-
-
-
-
 
 ## Usage
 
@@ -78,6 +36,57 @@ python -m src.models.predict_model
 ```bash
 pytest tests/
 ```
+
+## Configuration (configs/config.yaml)
+
+Tous les paramètres **non-secrets** du projet sont centralisés dans
+`configs/config.yaml` : chemins, colonnes du modèle, hyperparamètres,
+paramètres d'entraînement, régions/coordonnées météo, noms de repos
+HuggingFace, nom d'expérience MLflow.
+
+Chargement via `src/config.py` :
+
+```python
+from src.config import load_config
+config = load_config()
+```
+
+**Ce qui reste en variable d'environnement (jamais dans ce fichier) :**
+
+- `HF_TOKEN` : token HuggingFace
+- `MLFLOW_TRACKING_URI` : URL du serveur MLflow (une valeur par défaut
+  non-secrète existe dans `config.yaml`, mais la variable d'environnement
+  prend toujours le dessus si elle est définie)
+- `HF_MODEL_REPO` : peut aussi être surchargé via variable d'environnement
+  si tu veux pointer temporairement vers un autre repo sans toucher au YAML
+
+Pour changer un hyperparamètre (ex: `test_size`, `max_iter`) ou ajouter une
+région météo, il suffit d'éditer `configs/config.yaml` — aucun code à
+toucher.
+
+### Modifier MLFLOW_TRACKING_URI (ou HF_MODEL_REPO, HF_TOKEN)
+
+Ces valeurs vivent à 3 endroits différents, à mettre à jour séparément
+selon où le code s'exécute :
+
+1. **En local** : `export MLFLOW_TRACKING_URI=https://...` dans ton shell,
+   ou un fichier `.env` chargé avec `python-dotenv` (non fourni par défaut).
+2. **GitHub Actions** (`trigger_job.py`, déclenché par le cron) :
+   `Settings > Secrets and variables > Actions > Variables` → ajouter
+   `MLFLOW_TRACKING_URI`. Le workflow `train.yml` l'expose déjà au step
+   via `${{ vars.MLFLOW_TRACKING_URI }}`.
+3. **Instance GPU HuggingFace** (là où `train.py` s'exécute réellement) :
+   **ne se configure jamais directement** — `trigger_job.py` doit la
+   transmettre explicitement via le paramètre `env=` de `run_job()`, car
+   l'instance GPU est un environnement totalement séparé du runner
+   GitHub Actions. C'est déjà câblé dans `trigger_job.py` ; si tu ajoutes
+   une nouvelle variable d'environnement au projet, pense à l'ajouter
+   aussi à `job_env` dans ce fichier, sinon elle n'atteindra jamais
+   `train.py`.
+
+Sans l'étape 3, la variable existerait bien sur le runner GitHub mais
+`train.py` ne la verrait jamais et retomberait silencieusement sur la
+valeur par défaut de `config.yaml`.
 
 ## Docker
 
@@ -119,3 +128,47 @@ ou via la configuration du job) :
 
 Pour tester manuellement le déclenchement sans attendre le cron, va dans l'onglet
 **Actions** du repo GitHub et lance le workflow via *"Run workflow"*.
+
+## Données externes (météo)
+
+`src/data/make_dataset.py` enrichit le dataset avec des données météo via
+l'API publique [Open-Meteo](https://open-meteo.com/) (gratuite, sans clé),
+appelée à **chaque exécution** — pas de cache utilisé comme source de vérité.
+La fusion se fait sur les clés `(date, région)`.
+
+- `REGION_COORDINATES` : mapping région → coordonnées, à adapter à ton
+  vrai découpage géographique
+- `data/external/meteo.csv` : sauvegarde de la dernière réponse API, à
+  titre de trace/inspection uniquement (régénéré à chaque run)
+- `--skip-external` : ignore l'appel API météo, pour tester rapidement
+  le nettoyage seul, hors ligne. **Ne pas utiliser en production** : le
+  modèle attend les colonnes météo et échouera sans elles.
+
+Si tu changes de fournisseur météo (clé API requise, autre région...),
+adapte `fetch_weather_for_region()` en conséquence.
+
+## Prédictions automatisées (données fraîches, sans réentraînement)
+
+Contrairement à l'entraînement, l'inférence avec ce modèle ne nécessite pas de
+GPU : le pipeline complet (`.github/workflows/predict.yml`) tourne directement
+sur le runner GitHub Actions (CPU), sans passer par HuggingFace Jobs.
+
+1. **`.github/workflows/predict.yml`** : cron GitHub Actions, se déclenche
+   périodiquement (par défaut toutes les heures) et exécute `predict_model.py`.
+2. **`src/models/predict_model.py`** :
+   - télécharge le modèle déjà entraîné depuis le Hub HuggingFace (`model.joblib`)
+   - charge les données fraîches (source à brancher dans `load_input_data`)
+   - génère les prédictions et les sauvegarde dans `reports/predictions.csv`
+3. Les prédictions sont publiées comme **artefact GitHub Actions** (téléchargeable
+   depuis l'onglet Actions, conservé 30 jours par défaut).
+
+**Variables/secrets requis dans le repo GitHub :**
+
+- `HF_TOKEN` (secret) : même token que pour l'entraînement
+- `HF_MODEL_REPO` (variable, `Settings > Secrets and variables > Actions > Variables`) :
+  nom du repo HuggingFace où le modèle entraîné est stocké
+
+**À compléter avant utilisation :**
+
+- `load_input_data()` dans `predict_model.py` : brancher la vraie source de
+  données fraîches (API, base de données, fichier déposé périodiquement...)

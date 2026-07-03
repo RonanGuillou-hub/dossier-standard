@@ -19,9 +19,12 @@ jobs:
           python-version: "3.11"
 
       - name: Installer les dépendances
-        run: pip install huggingface_hub
+        run: pip install -r requirements.txt
 
       - name: Déclencher le job d'entraînement sur HuggingFace
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+          MLFLOW_EXPERIMENT_NAME: ${{ vars.MLFLOW_EXPERIMENT_NAME }}
+          HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
         run: python trigger_job.py

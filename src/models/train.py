@@ -12,9 +12,13 @@ Contenu :
   entraîné vers le Hub HuggingFace.
 
 Le chargement des données brutes et leur nettoyage structurel
-(déduplication, correction des valeurs aberrantes évidentes...) ont
-déjà eu lieu en amont, dans src/data/make_dataset.py. Ce script part
-directement de data/processed/dataset_clean.csv.
+(déduplication, correction des valeurs aberrantes évidentes, fusion
+météo...) ont déjà eu lieu en amont, dans src/data/make_dataset.py.
+Ce script part directement de data/processed/dataset_clean.csv.
+
+Paramètres non-secrets (colonnes, hyperparamètres, noms de repos) lus
+depuis configs/config.yaml — voir src/config.py. Les secrets (HF_TOKEN,
+MLFLOW_TRACKING_URI) restent en variables d'environnement.
 """
 
 import logging
@@ -35,17 +39,35 @@ from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
+from src.config import load_config
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-RANDOM_STATE = 42
+CONFIG = load_config()
 
-PROCESSED_DATA_PATH = Path("data/processed/dataset_clean.csv")
+PROCESSED_DATA_PATH = (
+    Path(CONFIG["paths"]["data"]["processed"]) / CONFIG["paths"]["processed_filename"]
+)
 
-MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "https://ton-serveur-mlflow.com")
-MLFLOW_EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME", "mon-projet-ml")
+RANDOM_STATE = CONFIG["training"]["random_state"]
+TEST_SIZE = CONFIG["training"]["test_size"]
+CV_FOLDS = CONFIG["training"]["cv_folds"]
+SCORING = CONFIG["training"]["scoring"]
 
-HF_MODEL_REPO = os.environ.get("HF_MODEL_REPO", "mon-user/mon-modele")
+MODEL_PARAMS = CONFIG["model"]["params"]
+NUMERIC_COLS = CONFIG["model"]["features"]["numeric"]
+CATEGORICAL_COLS = CONFIG["model"]["features"]["categorical"]
+
+# Secrets / valeurs dépendantes de l'environnement : variables d'env en
+# priorité, config.yaml comme valeur par défaut non-secrète en repli.
+# Secrets / valeurs dépendantes de l'environnement : variables d'env en
+# priorité, config.yaml comme valeur par défaut non-secrète en repli.
+# `or` (et non `.get(key, default)`) car une variable GitHub Actions
+# non configurée arrive comme chaîne vide, pas absente.
+MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI") or CONFIG["mlflow"]["default_tracking_uri"]
+MLFLOW_EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME") or CONFIG["mlflow"]["experiment_name"]
+HF_MODEL_REPO = os.environ.get("HF_MODEL_REPO") or CONFIG["huggingface"]["model_repo"]
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
 
@@ -109,17 +131,6 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         ]
 
 
-NUMERIC_COLS = [
-    "age", "revenu", "anciennete_mois",
-    "revenu_par_annee_anciennete", "revenu_par_age",
-    "temperature_max", "temperature_min", "precipitation",      # données météo ajouté via le dossier external
-]
-CATEGORICAL_COLS = [
-    "categorie", "region",
-    "tranche_age", "categorie_region",
-]
-
-
 def build_model() -> Pipeline:
     """Construit le pipeline complet : feature engineering + preprocessing + modèle."""
     numeric_pipeline = Pipeline(steps=[
@@ -140,7 +151,7 @@ def build_model() -> Pipeline:
     return Pipeline(steps=[
         ("feature_engineering", FeatureEngineer()),
         ("preprocessing", preprocessor),
-        ("classifier", LogisticRegression(max_iter=1000, random_state=RANDOM_STATE)),
+        ("classifier", LogisticRegression(**MODEL_PARAMS)),
     ])
 
 
@@ -164,7 +175,7 @@ def load_data(path: Path = PROCESSED_DATA_PATH):
 # ---------------------------------------------------------------------------
 def train(model: Pipeline, X, y):
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
     )
 
     model.fit(X_train, y_train)
@@ -176,8 +187,8 @@ def train(model: Pipeline, X, y):
     logger.info("Accuracy (test) : %.3f", accuracy)
     logger.info("\n%s", classification_report(y_test, y_pred))
 
-    cv_scores = cross_val_score(model, X_train, y_train, cv=5, scoring="accuracy")
-    logger.info("Accuracy (CV, 5 folds) : %.3f (+/- %.3f)", cv_scores.mean(), cv_scores.std())
+    cv_scores = cross_val_score(model, X_train, y_train, cv=CV_FOLDS, scoring=SCORING)
+    logger.info("Accuracy (CV, %d folds) : %.3f (+/- %.3f)", CV_FOLDS, cv_scores.mean(), cv_scores.std())
 
     metrics = {
         "accuracy": accuracy,
@@ -204,11 +215,10 @@ def main():
             model = build_model()
 
             params = {
-                "model_type": "LogisticRegression",
-                "max_iter": 1000,
-                "test_size": 0.2,
-                "cv_folds": 5,
-                "random_state": RANDOM_STATE,
+                "model_type": CONFIG["model"]["type"],
+                **MODEL_PARAMS,
+                "test_size": TEST_SIZE,
+                "cv_folds": CV_FOLDS,
             }
             mlflow.log_params(params)
 
@@ -228,7 +238,7 @@ def main():
 
             output_dir = Path("outputs/model")
             output_dir.mkdir(parents=True, exist_ok=True)
-            joblib.dump(trained_model, output_dir / "model.joblib")
+            joblib.dump(trained_model, output_dir / CONFIG["paths"]["model_filename"])
 
             api = HfApi(token=HF_TOKEN)
             api.upload_folder(

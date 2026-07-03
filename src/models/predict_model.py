@@ -23,13 +23,22 @@ import joblib
 import pandas as pd
 from huggingface_hub import hf_hub_download
 
+from src.config import load_config
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-MODEL_DIR = Path("models")
-DEFAULT_OUTPUT = Path("reports/predictions.csv")
+CONFIG = load_config()
 
-HF_MODEL_REPO = os.environ.get("HF_MODEL_REPO", "mon-user/mon-modele")
+MODEL_DIR = Path(CONFIG["paths"]["models"])
+MODEL_FILENAME = CONFIG["paths"]["model_filename"]
+DEFAULT_OUTPUT = Path(CONFIG["paths"]["predictions_filename"])
+
+# Secrets / valeurs dépendantes de l'environnement : variables d'env en
+# priorité, config.yaml comme valeur par défaut non-secrète en repli.
+# `or` (et non `.get(key, default)`) car une variable GitHub Actions
+# non configurée arrive comme chaîne vide, pas absente.
+HF_MODEL_REPO = os.environ.get("HF_MODEL_REPO") or CONFIG["huggingface"]["model_repo"]
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
 
@@ -39,18 +48,18 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 def load_model(source: str = "hub", model_path: Path = MODEL_DIR):
     """
     Charge le modèle entraîné.
-    - source="hub"   : télécharge model.joblib depuis HF_MODEL_REPO
-    - source="local" : charge depuis models/model.joblib
+    - source="hub"   : télécharge le modèle depuis HF_MODEL_REPO
+    - source="local" : charge depuis models/<model_filename>
     """
     if source == "hub":
         logger.info("Téléchargement du modèle depuis %s", HF_MODEL_REPO)
         model_file = hf_hub_download(
             repo_id=HF_MODEL_REPO,
-            filename="model.joblib",
+            filename=MODEL_FILENAME,
             token=HF_TOKEN,
         )
     elif source == "local":
-        model_file = model_path / "model.joblib"
+        model_file = model_path / MODEL_FILENAME
         if not model_file.exists():
             raise FileNotFoundError(f"{model_file} introuvable.")
     else:

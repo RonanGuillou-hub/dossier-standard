@@ -1,12 +1,108 @@
+# =============================================================================
+# Configuration du projet — UNIQUEMENT des variables non-secrètes.
+# Les secrets (tokens, credentials) restent en variables d'environnement
+# (GitHub Secrets en CI, .env en local) — jamais dans ce fichier.
+# =============================================================================
+
+paths:
+  data:
+    raw: "data/raw"
+    interim: "data/interim"
+    processed: "data/processed"
+    external: "data/external"
+  models: "models"
+  reports: "reports"
+  processed_filename: "dataset_clean.csv"
+  model_filename: "model.joblib"
+  predictions_filename: "reports/predictions.csv"
+
+# -----------------------------------------------------------------------------
+# Génération du dataset synthétique (src/data/make_dataset.py)
+# À supprimer une fois une vraie source de données branchée.
+# -----------------------------------------------------------------------------
 data:
-  raw_path: "data/raw"
-  processed_path: "data/processed"
-
-model:
-  name: "baseline"
-  params:
+  synthetic:
+    n_samples: 500
     random_state: 42
+    date_range:
+      start: "2026-01-01"
+      end: "2026-06-30"
 
+# -----------------------------------------------------------------------------
+# Données externes — météo (src/data/make_dataset.py)
+# -----------------------------------------------------------------------------
+external:
+  weather:
+    provider: "open-meteo"
+    api_url: "https://archive-api.open-meteo.com/v1/archive"
+    timezone: "Europe/Paris"
+    daily_variables:
+      - "temperature_2m_max"
+      - "temperature_2m_min"
+      - "precipitation_sum"
+    cache_file: "data/external/meteo.csv"
+    regions:
+      Nord:
+        latitude: 50.63
+        longitude: 3.06
+      Sud:
+        latitude: 43.30
+        longitude: 5.37
+      Est:
+        latitude: 48.58
+        longitude: 7.75
+      Ouest:
+        latitude: 47.22
+        longitude: -1.55
+
+# -----------------------------------------------------------------------------
+# Modèle (src/models/train.py)
+# -----------------------------------------------------------------------------
+model:
+  type: "LogisticRegression"
+  params:
+    max_iter: 1000
+    random_state: 42
+  features:
+    numeric:
+      - "age"
+      - "revenu"
+      - "anciennete_mois"
+      - "revenu_par_annee_anciennete"
+      - "revenu_par_age"
+      - "temperature_max"
+      - "temperature_min"
+      - "precipitation"
+    categorical:
+      - "categorie"
+      - "region"
+      - "tranche_age"
+      - "categorie_region"
+
+# -----------------------------------------------------------------------------
+# Entraînement (src/models/train.py)
+# -----------------------------------------------------------------------------
 training:
   test_size: 0.2
-  seed: 42
+  random_state: 42
+  cv_folds: 5
+  scoring: "accuracy"
+
+# -----------------------------------------------------------------------------
+# MLflow (src/models/train.py)
+# Valeurs par défaut non-secrètes ; MLFLOW_TRACKING_URI en variable
+# d'environnement prend toujours le dessus si elle est définie.
+# -----------------------------------------------------------------------------
+mlflow:
+  experiment_name: "mon-projet-ml"
+  default_tracking_uri: "https://ton-serveur-mlflow.com"
+
+# -----------------------------------------------------------------------------
+# HuggingFace (trigger_job.py, train.py, predict_model.py)
+# Noms de repos et paramètres de job — pas de token ici.
+# -----------------------------------------------------------------------------
+huggingface:
+  model_repo: "mon-user/mon-modele"
+  job_repo: "mon-user/mon-repo-job"
+  job_image: "pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime"
+  job_flavor: "a10g-small"
