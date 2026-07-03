@@ -20,6 +20,7 @@ viennent de configs/config.yaml — voir src/config.py.
 
 import argparse
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -145,10 +146,20 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def save_processed_data(df: pd.DataFrame, output_path: Path) -> Path:
-    """Sauvegarde le dataset nettoyé au format CSV."""
+    """
+    Sauvegarde le dataset nettoyé au format CSV, puis le persiste sur S3
+    (paths.s3) — le disque de l'instance GPU HuggingFace est éphémère et
+    disparaît à la fin du job, sans cette persistance il serait impossible
+    d'auditer/rejouer un entraînement passé.
+    """
     output_path.mkdir(parents=True, exist_ok=True)
     output_file = output_path / PROCESSED_FILENAME
     df.to_csv(output_file, index=False)
+
+    s3_cfg = CONFIG.get("s3")
+    if s3_cfg:
+        upload_file_to_s3(output_file, s3_cfg["bucket"], s3_cfg["prefixes"]["processed"])
+
     return output_file
 
 
@@ -197,6 +208,37 @@ def fetch_weather_for_region(region: str, start_date: str, end_date: str) -> pd.
     })
 
 
+def upload_file_to_s3(local_file: Path, bucket: str, key_prefix: str) -> None:
+    """
+    Persiste un fichier local dans le bucket S3 configuré, sous la clé :
+        {key_prefix}/{année}/{mois}/{nom}_{AAAAMMJJ}.csv
+    où {nom} est déduit du dernier segment de key_prefix (ex: "meteo" pour
+    key_prefix="external/meteo").
+
+    Nécessite AWS_ACCESS_KEY_ID et AWS_SECRET_ACCESS_KEY en variables
+    d'environnement — jamais dans config.yaml. Si ces credentials sont
+    absents (ex: développement local), l'upload est simplement ignoré
+    avec un warning.
+
+    Note : la clé ne contient que la date (pas l'heure) — plusieurs runs
+    le même jour écraseront le même fichier S3. Si tu as besoin d'un
+    fichier distinct par run, ajoute l'heure dans le format ci-dessous.
+    """
+    if not (os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY")):
+        logger.warning("Credentials AWS absents — upload S3 de %s ignoré.", local_file.name)
+        return
+
+    import boto3  # import local pour ne pas alourdir les autres scripts qui n'en ont pas besoin
+
+    now = pd.Timestamp.now()
+    name = Path(key_prefix).name
+    s3_key = f"{key_prefix}/{now:%Y}/{now:%m}/{name}_{now:%Y%m%d}.csv"
+
+    s3 = boto3.client("s3")
+    s3.upload_file(str(local_file), bucket, s3_key)
+    logger.info("Fichier persisté sur s3://%s/%s", bucket, s3_key)
+
+
 def fetch_external_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Récupère la météo pour toutes les combinaisons (région, plage de dates)
@@ -204,8 +246,9 @@ def fetch_external_data(df: pd.DataFrame) -> pd.DataFrame:
     make_dataset.py, donc toujours à jour — pas de dépendance à un cache
     pour fonctionner.
 
-    Le résultat est aussi sauvegardé dans le fichier configuré
-    (external.weather.cache_file) à titre de trace/inspection uniquement.
+    Le résultat est sauvegardé localement (external.weather.cache_file)
+    puis persisté sur S3 (external.weather.s3), car le disque de
+    l'instance GPU HuggingFace est éphémère et disparaît à la fin du job.
     """
     start_date = df["date"].min().strftime("%Y-%m-%d")
     end_date = df["date"].max().strftime("%Y-%m-%d")
@@ -226,6 +269,10 @@ def fetch_external_data(df: pd.DataFrame) -> pd.DataFrame:
     cache_file = Path(CONFIG["external"]["weather"]["cache_file"])
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     external_df.to_csv(cache_file, index=False)
+
+    s3_cfg = CONFIG.get("s3")
+    if s3_cfg:
+        upload_file_to_s3(cache_file, s3_cfg["bucket"], s3_cfg["prefixes"]["weather"])
 
     return external_df
 

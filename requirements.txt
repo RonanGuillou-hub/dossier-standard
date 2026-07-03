@@ -10,3 +10,4 @@ mlflow
 huggingface_hub
 joblib
 requests
+boto3

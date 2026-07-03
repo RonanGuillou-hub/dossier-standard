@@ -147,6 +147,36 @@ La fusion se fait sur les clés `(date, région)`.
 Si tu changes de fournisseur météo (clé API requise, autre région...),
 adapte `fetch_weather_for_region()` en conséquence.
 
+### Persistance sur S3
+
+L'instance GPU HuggingFace où `make_dataset.py` s'exécute est **éphémère** :
+tout ce qui n'est pas explicitement sauvegardé ailleurs disparaît à la fin
+du job — y compris `data/external/meteo.csv` et `data/processed/dataset_clean.csv`,
+qui ne sont ni commités sur GitHub (`.gitignore`) ni stockés nulle part
+par défaut.
+
+Un seul bucket S3 partagé (`configs/config.yaml`, section `s3`) reçoit les
+deux fichiers, chacun sous son propre préfixe. Structure de clé :
+
+```
+{prefix}/{année}/{mois}/{nom}_{AAAAMMJJ}.csv
+
+# Exemples concrets :
+processed/dataset_clean/2026/07/dataset_clean_20260703.csv
+external/meteo/2026/07/meteo_20260703.csv
+```
+
+⚠️ La clé ne contient que la date, pas l'heure : plusieurs runs le même
+jour écrasent le même fichier S3. Si tu veux un fichier distinct par run,
+ajoute l'heure dans `upload_file_to_s3()` (`src/data/make_dataset.py`).
+
+**Secrets requis** (jamais dans `config.yaml`) :
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — dans les GitHub Secrets
+  du repo, transmis à l'instance GPU par `trigger_job.py`
+
+Si ces credentials sont absents (ex: développement local sans accès AWS),
+l'upload est simplement ignoré avec un warning — pas d'erreur bloquante.
+
 ## Prédictions automatisées (données fraîches, sans réentraînement)
 
 Contrairement à l'entraînement, l'inférence avec ce modèle ne nécessite pas de

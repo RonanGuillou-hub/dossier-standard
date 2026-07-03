@@ -3,18 +3,8 @@ Script déclencheur : tourne sur le runner GitHub Actions (CPU, pas de GPU).
 Il ne fait AUCUN entraînement lui-même — il demande à HuggingFace
 de lancer, sur une instance GPU à la demande :
   1. src/data/make_dataset.py (génère data/processed/dataset_clean.csv,
-     y compris la fusion météo — nécessaire car l'instance GPU est
-     éphémère et ne contient aucune donnée pré-générée)
-  2. src/models/train.py (entraîne le modèle à partir de ce fichier)
-"""
-
-"""
-Script déclencheur : tourne sur le runner GitHub Actions (CPU, pas de GPU).
-Il ne fait AUCUN entraînement lui-même — il demande à HuggingFace
-de lancer, sur une instance GPU à la demande :
-  1. src/data/make_dataset.py (génère data/processed/dataset_clean.csv,
-     y compris la fusion météo — nécessaire car l'instance GPU est
-     éphémère et ne contient aucune donnée pré-générée)
+     y compris la fusion météo et son upload S3 — nécessaire car
+     l'instance GPU est éphémère et ne conserve rien après le job)
   2. src/models/train.py (entraîne le modèle à partir de ce fichier)
 
 Important : l'instance GPU est un environnement totalement séparé du
@@ -43,15 +33,24 @@ job_env = {
     "HF_MODEL_REPO": os.environ.get("HF_MODEL_REPO") or CONFIG["huggingface"]["model_repo"],
 }
 
+# Secrets chiffrés côté serveur HuggingFace. AWS_* est optionnel : si
+# absent, l'upload S3 du fichier météo est simplement ignoré (voir
+# upload_meteo_to_s3 dans src/data/make_dataset.py).
+job_secrets = {"HF_TOKEN": HF_TOKEN}
+if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+    job_secrets["AWS_ACCESS_KEY_ID"] = os.environ["AWS_ACCESS_KEY_ID"]
+    job_secrets["AWS_SECRET_ACCESS_KEY"] = os.environ["AWS_SECRET_ACCESS_KEY"]
+
 job = run_job(
     image=CONFIG["huggingface"]["job_image"],
     command=["bash", "-c", "python -m src.data.make_dataset && python -m src.models.train"],
     flavor=CONFIG["huggingface"]["job_flavor"],
     repo_id=CONFIG["huggingface"]["job_repo"],
     env=job_env,
-    secrets={"HF_TOKEN": HF_TOKEN},
+    secrets=job_secrets,
     token=HF_TOKEN,
 )
 
 print(f"Job lancé : {job}")
 print(f"Variables d'environnement transmises : {list(job_env.keys())}")
+print(f"Secrets transmis : {list(job_secrets.keys())}")

@@ -27,4 +27,6 @@ jobs:
           MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
           MLFLOW_EXPERIMENT_NAME: ${{ vars.MLFLOW_EXPERIMENT_NAME }}
           HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: python trigger_job.py
