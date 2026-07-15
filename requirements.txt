@@ -11,3 +11,6 @@ huggingface_hub
 joblib
 requests
 boto3
+fastapi
+uvicorn[standard]
+streamlit

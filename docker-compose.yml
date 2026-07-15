@@ -28,3 +28,28 @@ services:
     volumes:
       - .:/app
     command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+
+  api:
+    build: .
+    container_name: mon-projet-ml-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./configs:/app/configs
+    environment:
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+
+  streamlit:
+    build: .
+    container_name: mon-projet-ml-streamlit
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      - api
+    command: streamlit run src/app/streamlit_app.py --server.port 8501 --server.address 0.0.0.0

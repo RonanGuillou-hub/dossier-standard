@@ -177,6 +177,58 @@ ajoute l'heure dans `upload_file_to_s3()` (`src/data/make_dataset.py`).
 Si ces credentials sont absents (ex: développement local sans accès AWS),
 l'upload est simplement ignoré avec un warning — pas d'erreur bloquante.
 
+## API d'inférence (FastAPI) + interface Streamlit
+
+`src/api/` sert le modèle entraîné via une API REST. Contrairement à
+`predict_model.py` (batch, déclenché par cron), l'API répond en temps réel
+à des requêtes individuelles.
+
+**Source du modèle** (`configs/config.yaml`, `api.model_source`) : `local`,
+`s3` ou `mlflow` — interchangeable sans toucher au code.
+
+### Lancer en local
+
+```bash
+make api          # démarre l'API sur http://localhost:8000 (docs interactives : /docs)
+make streamlit     # démarre l'interface sur http://localhost:8501, dans un autre terminal
+```
+
+### Lancer avec Docker Compose
+
+```bash
+docker compose up api streamlit
+```
+
+### Endpoints
+
+| Méthode | Route | Description |
+|---|---|---|
+| GET | `/health` | Vérifie que l'API répond |
+| GET | `/model/info` | Source et date de chargement du modèle en cache |
+| POST | `/model/reload` | Force un rechargement depuis la source configurée |
+| POST | `/predict` | Prédiction sur une observation unique |
+| POST | `/predict/batch` | Prédiction sur plusieurs observations |
+
+**Champs attendus par `/predict`** : les colonnes brutes du pipeline
+(`age`, `revenu`, `anciennete_mois`, `categorie`, `region`) et,
+optionnellement, `date` (`AAAA-MM-JJ`, par défaut aujourd'hui). L'API
+récupère automatiquement la météo de la région/date via
+`fetch_weather_for_region` (même fonction qu'à l'entraînement, pour
+éviter toute divergence train/serving), avec un cache mémoire par
+combinaison région/date pour éviter les appels redondants. Les colonnes
+dérivées (`revenu_par_age`, `tranche_age`...) sont calculées
+automatiquement par le pipeline (`FeatureEngineer`), inutile de les fournir.
+
+⚠️ `fetch_weather_for_region` utilise l'API archive d'Open-Meteo, pensée
+pour des dates passées — les données très récentes (derniers jours)
+peuvent ne pas encore être disponibles. Pour de la météo du jour même en
+production, il faudrait basculer vers l'API forecast d'Open-Meteo.
+
+**Secrets requis selon `api.model_source`** :
+- `mlflow` : `MLFLOW_TRACKING_URI`
+- `s3` : `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+- `local` : aucun, lit `models/model.joblib`
+
 ## Prédictions automatisées (données fraîches, sans réentraînement)
 
 Contrairement à l'entraînement, l'inférence avec ce modèle ne nécessite pas de

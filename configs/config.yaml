@@ -30,6 +30,26 @@ s3:
     weather: "external/meteo"
 
 # -----------------------------------------------------------------------------
+# API d'inférence (src/api/) + interface Streamlit (src/app/)
+# -----------------------------------------------------------------------------
+api:
+  host: "0.0.0.0"
+  port: 8000
+  # Source du modèle servi par l'API : "local" | "s3" | "mlflow"
+  model_source: "mlflow"
+  s3:
+    bucket: "mon-projet-ml-data"
+    key: "models/model.joblib"
+  mlflow:
+    model_name: "mon-projet-ml"
+    model_stage: "Production"
+
+streamlit:
+  # Surchargée par la variable d'environnement API_URL si définie
+  # (utile en Docker Compose, où l'API n'est pas sur localhost).
+  api_url: "http://localhost:8000"
+
+# -----------------------------------------------------------------------------
 # Génération du dataset synthétique (src/data/make_dataset.py)
 # À supprimer une fois une vraie source de données branchée.
 # -----------------------------------------------------------------------------
