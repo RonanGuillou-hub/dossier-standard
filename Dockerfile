@@ -3,7 +3,8 @@ FROM python:3.11-slim
 
 # --- Variables d'environnement ---
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
 
 # --- Répertoire de travail ---
 WORKDIR /app

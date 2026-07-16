@@ -48,6 +48,8 @@ with st.sidebar:
             r.raise_for_status()
             st.success("Modèle rechargé")
             st.json(r.json())
+        except requests.HTTPError as e:
+            st.error(f"Erreur API ({e.response.status_code}) : {e.response.json().get('detail', e)}")
         except Exception as e:
             st.error(f"Erreur : {e}")
 

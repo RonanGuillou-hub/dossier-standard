@@ -53,11 +53,17 @@ def _load_from_s3() -> Any:
 def _load_from_mlflow() -> Any:
     import mlflow.sklearn
 
-    mlflow_cfg = CONFIG["api"]["mlflow"]
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI") or CONFIG["mlflow"]["default_tracking_uri"]
     mlflow.set_tracking_uri(tracking_uri)
 
-    model_uri = f"models:/{mlflow_cfg['model_name']}/{mlflow_cfg['model_stage']}"
+    # URI par alias (models:/<nom>@<alias>), pas par stage -- les stages
+    # MLflow (Staging/Production) sont dépréciés depuis la 2.9. L'alias
+    # est assigné par train.py à chaque entraînement via
+    # set_registered_model_alias(). Même nom/alias que côté enregistrement
+    # (section mlflow: de config.yaml), pour ne jamais désynchroniser les deux.
+    registered_name = CONFIG["mlflow"]["registered_model_name"]
+    alias = CONFIG["mlflow"]["model_alias"]
+    model_uri = f"models:/{registered_name}@{alias}"
     model = mlflow.sklearn.load_model(model_uri)
     logger.info("Modèle chargé depuis MLflow : %s", model_uri)
     return model

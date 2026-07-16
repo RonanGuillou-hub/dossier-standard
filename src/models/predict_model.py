@@ -8,22 +8,27 @@ pas de GPU, donc pas besoin de passer par HuggingFace Jobs ici.
 
 Flux :
     1. Téléchargement du modèle entraîné depuis le Hub HuggingFace (ou local)
-    2. Chargement des données fraîches
-    3. Prédiction (le pipeline sklearn complet - FeatureEngineer +
+    2. Chargement des données fraîches (colonnes brutes uniquement --
+       PAS de colonnes météo, récupérées automatiquement à l'étape 3,
+       exactement comme le fait l'API — voir src/api/main.py)
+    3. Enrichissement météo (région + date -> temperature_max/min, precipitation)
+    4. Prédiction (le pipeline sklearn complet - FeatureEngineer +
        ColumnTransformer inclus - gère tout automatiquement)
-    4. Sauvegarde des résultats
+    5. Sauvegarde des résultats
 """
 
 import argparse
 import logging
 import os
 from pathlib import Path
+from typing import Dict, Tuple
 
 import joblib
 import pandas as pd
 from huggingface_hub import hf_hub_download
 
 from src.config import load_config
+from src.data.make_dataset import fetch_weather_for_region
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -75,8 +80,13 @@ def load_input_data(input_path: Path = None) -> pd.DataFrame:
     """
     Charge les données fraîches à prédire.
     TODO: brancher la vraie source (API, base de données, fichier déposé
-    périodiquement dans data/raw...). Le schéma attendu est le même que
-    celui produit par src/data/make_dataset.py (sans la colonne 'cible').
+    périodiquement dans data/raw...). Pour l'instant, seul un fichier CSV
+    passé explicitement via --input est supporté (mode test/manuel).
+
+    Schéma attendu : colonnes brutes (age, revenu, anciennete_mois,
+    categorie, region) + optionnellement 'date' (AAAA-MM-JJ, défaut :
+    aujourd'hui). PAS de colonnes météo -- récupérées automatiquement
+    par enrich_with_weather().
     """
     if input_path is not None:
         return pd.read_csv(input_path)
@@ -88,7 +98,56 @@ def load_input_data(input_path: Path = None) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# 3. PRÉDICTION
+# 3. ENRICHISSEMENT MÉTÉO (même logique que l'API, voir src/api/main.py)
+# ---------------------------------------------------------------------------
+# Cache mémoire (région, date) -> météo, pour éviter de re-fetcher la même
+# combinaison plusieurs fois dans un même batch.
+_weather_cache: Dict[Tuple[str, str], dict] = {}
+
+
+def _get_weather(region: str, date: str) -> dict:
+    key = (region, date)
+    if key in _weather_cache:
+        return _weather_cache[key]
+
+    weather_df = fetch_weather_for_region(region, date, date)
+    if weather_df.empty:
+        raise RuntimeError(f"Aucune donnée météo disponible pour région={region!r}, date={date!r}.")
+
+    row = weather_df.iloc[0]
+    weather = {
+        "temperature_max": float(row["temperature_max"]),
+        "temperature_min": float(row["temperature_min"]),
+        "precipitation": float(row["precipitation"]),
+    }
+    _weather_cache[key] = weather
+    return weather
+
+
+def enrich_with_weather(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ajoute temperature_max/min et precipitation à chaque ligne, en
+    fonction de sa région et de sa date ('date' absente ou vide ->
+    aujourd'hui). Un seul appel API par combinaison (région, date)
+    distincte présente dans le batch, grâce au cache.
+    """
+    df = df.copy()
+    today = pd.Timestamp.now().strftime("%Y-%m-%d")
+
+    if "date" not in df.columns:
+        df["date"] = today
+    else:
+        df["date"] = df["date"].fillna(today).replace("", today)
+
+    weather_cols = df.apply(
+        lambda row: pd.Series(_get_weather(row["region"], str(row["date"]))),
+        axis=1,
+    )
+    return pd.concat([df, weather_cols], axis=1)
+
+
+# ---------------------------------------------------------------------------
+# 4. PRÉDICTION
 # ---------------------------------------------------------------------------
 def predict(model, data: pd.DataFrame) -> pd.DataFrame:
     """Le pipeline sklearn complet gère feature engineering + preprocessing + prédiction."""
@@ -108,7 +167,7 @@ def save_predictions(df: pd.DataFrame, output_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# 4. MAIN
+# 5. MAIN
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Génère des prédictions sur des données fraîches.")
@@ -119,6 +178,7 @@ def main():
 
     model = load_model(source=args.source)
     data = load_input_data(args.input)
+    data = enrich_with_weather(data)
     results = predict(model, data)
 
     output_file = save_predictions(results, args.output)

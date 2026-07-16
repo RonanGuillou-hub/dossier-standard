@@ -189,7 +189,12 @@ def main():
             # directement dans train.py.
             trusted_feature_engineer = f"{FeatureEngineer.__module__}.FeatureEngineer"
 
-            mlflow.sklearn.log_model(
+            # registered_model_name : sans ce paramètre, log_model() attache
+            # le modèle au run (consultable via runs:/<run_id>/model) mais
+            # ne l'enregistre PAS dans le Model Registry -- l'API (qui charge
+            # via models:/<nom>@<alias>) ne trouverait alors rien
+            # ("RESOURCE_DOES_NOT_EXIST: Registered Model ... not found").
+            model_info = mlflow.sklearn.log_model(
                 trained_model,
                 "model",
                 code_paths=["src", "configs"],
@@ -197,6 +202,25 @@ def main():
                     trusted_feature_engineer,
                     "numpy.dtype",
                 ],
+                registered_model_name=CONFIG["mlflow"]["registered_model_name"],
+            )
+
+            # Assigne l'alias configuré (ex: "champion") à CETTE version --
+            # c'est ce que l'API va résoudre via models:/<nom>@<alias>. Les
+            # "stages" MLflow (Staging/Production) sont dépréciés depuis la
+            # 2.9 au profit des alias, d'où ce choix plutôt que
+            # transition_model_version_stage().
+            client = mlflow.MlflowClient()
+            client.set_registered_model_alias(
+                name=CONFIG["mlflow"]["registered_model_name"],
+                alias=CONFIG["mlflow"]["model_alias"],
+                version=model_info.registered_model_version,
+            )
+            logger.info(
+                "Modèle enregistré : %s (version %s, alias @%s)",
+                CONFIG["mlflow"]["registered_model_name"],
+                model_info.registered_model_version,
+                CONFIG["mlflow"]["model_alias"],
             )
 
         except Exception as e:

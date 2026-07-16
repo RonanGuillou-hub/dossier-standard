@@ -179,6 +179,20 @@ modèle échoue ailleurs avec une erreur "untrusted types" ou `FileNotFoundError
 Testé avec un vrai round-trip MLflow (log → load → predict) depuis un
 répertoire totalement isolé du projet.
 
+**Model Registry MLflow (obligatoire pour que l'API charge le modèle)** :
+`train.py` enregistre le modèle sous `mlflow.registered_model_name`
+(`config.yaml`) et lui assigne l'alias `mlflow.model_alias` (ex:
+`@champion`) à chaque run — sans ça, l'API (`api.model_source: "mlflow"`)
+échoue avec `RESOURCE_DOES_NOT_EXIST: Registered Model ... not found`.
+Utilise des **alias**, pas les stages `Staging`/`Production` (dépréciés
+par MLflow depuis la version 2.9).
+
+⚠️ **Le Model Registry nécessite un backend base de données** côté
+serveur MLflow (`sqlite:///...`, `postgresql://...`...) — un simple
+stockage fichier (`file:///...` ou `./mlruns`) ne le supporte pas.
+Si ton serveur MLflow tourne encore en mode fichier, `registered_model_name`
+échouera silencieusement ou avec une erreur explicite selon la version.
+
 **Secrets requis dans le repo GitHub** (`Settings > Secrets and variables > Actions`) :
 
 - `HF_TOKEN` : token HuggingFace avec droits d'écriture sur le repo de job et le modèle
@@ -304,10 +318,28 @@ sur le runner GitHub Actions (CPU), sans passer par HuggingFace Jobs.
    périodiquement (par défaut toutes les heures) et exécute `predict_model.py`.
 2. **`src/models/predict_model.py`** :
    - télécharge le modèle déjà entraîné depuis le Hub HuggingFace (`model.joblib`)
-   - charge les données fraîches (source à brancher dans `load_input_data`)
+   - charge les données fraîches (source à brancher dans `load_input_data` —
+     seul un fichier CSV via `--input` est supporté pour l'instant, pour
+     tester manuellement)
+   - **récupère automatiquement la météo** de chaque région/date via
+     `enrich_with_weather()` (même logique que l'API, cache par combinaison
+     région/date) — pas besoin de fournir `temperature_max/min`,
+     `precipitation` dans le fichier d'entrée
    - génère les prédictions et les sauvegarde dans `reports/predictions.csv`
 3. Les prédictions sont publiées comme **artefact GitHub Actions** (téléchargeable
    depuis l'onglet Actions, conservé 30 jours par défaut).
+
+**Tester manuellement** avec l'exemple fourni :
+
+```bash
+make predict INPUT=data/examples/sample_input.csv
+# ou directement :
+python -m src.models.predict_model --source local --input data/examples/sample_input.csv
+```
+
+`data/examples/sample_input.csv` contient uniquement les colonnes brutes
+(`age`, `revenu`, `anciennete_mois`, `categorie`, `region`) — un `date`
+optionnel peut être ajouté par ligne (`AAAA-MM-JJ`, défaut : aujourd'hui).
 
 **Variables/secrets requis dans le repo GitHub :**
 
@@ -315,7 +347,8 @@ sur le runner GitHub Actions (CPU), sans passer par HuggingFace Jobs.
 - `HF_MODEL_REPO` (variable, `Settings > Secrets and variables > Actions > Variables`) :
   nom du repo HuggingFace où le modèle entraîné est stocké
 
-**À compléter avant utilisation :**
+**À compléter avant utilisation en production :**
 
 - `load_input_data()` dans `predict_model.py` : brancher la vraie source de
   données fraîches (API, base de données, fichier déposé périodiquement...)
+  — actuellement, seul `--input <fichier.csv>` fonctionne (mode test/manuel)

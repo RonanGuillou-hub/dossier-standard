@@ -19,16 +19,16 @@ train:
 	python -m src.models.train
 
 predict:
-	python -m src.models.predict_model
+	python -m src.models.predict_model $(if $(INPUT),--input $(INPUT))
 
 test:
 	pytest tests/
 
 api:
-	uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+	python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
 streamlit:
-	streamlit run src/app/streamlit_app.py
+	python -m streamlit run src/app/streamlit_app.py
 
 lint:
 	flake8 src/ tests/

@@ -41,9 +41,10 @@ api:
   s3:
     bucket: "mon-projet-ml-data"
     key: "models/model.joblib"
-  mlflow:
-    model_name: "mon-projet-ml"
-    model_stage: "Production"
+  # Pas de section mlflow ici -- api.model_source="mlflow" réutilise
+  # directement mlflow.registered_model_name et mlflow.model_alias
+  # (section mlflow: plus haut), pour ne jamais désynchroniser le nom
+  # utilisé à l'enregistrement (train.py) et au chargement (model_loader.py).
 
 streamlit:
   # Surchargée par la variable d'environnement API_URL si définie
@@ -130,6 +131,15 @@ training:
 mlflow:
   experiment_name: "mon-projet-ml"
   default_tracking_uri: "https://ronan-guillou-mlflow-test.hf.space/"
+  # Nom sous lequel train.py enregistre le modèle dans le Model Registry
+  # MLflow (mlflow.sklearn.log_model(..., registered_model_name=...)).
+  # Sans registration, l'API (api.mlflow) ne trouve rien -- "Registered
+  # Model with name=... not found".
+  registered_model_name: "mon-projet-ml"
+  # Alias assigné à la dernière version entraînée (ex: "champion").
+  # Les "stages" MLflow (Staging/Production) sont dépréciés depuis la
+  # 2.9 au profit des alias -- voir mlflow.org/docs/latest/ml/model-registry/
+  model_alias: "champion"
 
 # -----------------------------------------------------------------------------
 # HuggingFace (trigger_job.py, train.py, predict_model.py)
