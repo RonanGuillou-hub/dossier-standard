@@ -11,7 +11,6 @@ paths:
     processed: "data/processed"
     external: "data/external"
   models: "models"
-  models_history: "models/history"
   reports: "reports"
   processed_filename: "dataset_clean.csv"
   model_filename: "model.joblib"

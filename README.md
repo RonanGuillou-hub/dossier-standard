@@ -37,6 +37,33 @@ python -m src.models.predict_model
 pytest tests/
 ```
 
+La suite couvre : `FeatureEngineer` (feature engineering), `make_dataset.py`
+(nettoyage structurel, fusion météo), `train.py` (construction du pipeline,
+entraînement, métriques), `predict_model.py` (chargement du modèle,
+inférence), l'API FastAPI (tous les endpoints, météo mockée), et
+`config.py`. Fixtures partagées dans `tests/conftest.py` — le modèle
+d'entraînement (coûteux) n'est construit qu'une seule fois par session
+de test (`trained_model`, scope `session`).
+
+Les tests marqués `@pytest.mark.integration` (ex: `test_meteo.py`, vrai
+appel à l'API météo) sont **exclus par défaut** (voir `pytest.ini`) pour
+que la suite reste rapide et ne dépende pas du réseau :
+
+```bash
+pytest tests/                    # tests unitaires uniquement (rapide, hors ligne)
+pytest tests/ -m integration      # tests d'intégration uniquement (réseau requis)
+pytest tests/ -m ""                # tous les tests
+```
+
+## Notebook — exécution manuelle du pipeline
+
+`notebooks/manual_pipeline_run.ipynb` déroule tout le pipeline étape par
+étape (génération/nettoyage des données, météo, feature engineering,
+entraînement, inférence, test de l'API), utile pour déboguer ou explorer
+sans passer par le cron GitHub Actions ni HuggingFace Jobs. Si l'API météo
+n'est pas accessible (pas de réseau), le notebook retombe automatiquement
+sur des valeurs factices pour pouvoir continuer hors ligne.
+
 ## Configuration (configs/config.yaml)
 
 Tous les paramètres **non-secrets** du projet sont centralisés dans
@@ -69,8 +96,11 @@ toucher.
 Ces valeurs vivent à 3 endroits différents, à mettre à jour séparément
 selon où le code s'exécute :
 
-1. **En local** : `export MLFLOW_TRACKING_URI=https://...` dans ton shell,
-   ou un fichier `.env` chargé avec `python-dotenv` (non fourni par défaut).
+1. **En local** : un fichier `.env` à la racine du projet (copier
+   `.env.example`, jamais commité — voir `.gitignore`), chargé
+   automatiquement par `src/config.py` (`python-dotenv`) dans
+   `os.environ`. Une vraie variable d'environnement déjà définie n'est
+   jamais écrasée par `.env` (`override=False`).
 2. **GitHub Actions** (`trigger_job.py`, déclenché par le cron) :
    `Settings > Secrets and variables > Actions > Variables` → ajouter
    `MLFLOW_TRACKING_URI`. Le workflow `train.yml` l'expose déjà au step
@@ -112,7 +142,42 @@ Le pipeline complet fonctionne en 3 étapes :
 2. **`trigger_job.py`** : demande à HuggingFace Jobs de lancer une instance GPU
    à la demande et d'y exécuter `src/models/train.py`.
 3. **`src/models/train.py`** : tourne SUR l'instance GPU HuggingFace. Il entraîne le
-   modèle, logue les métriques vers MLflow, et pousse le modèle final sur le Hub.
+   modèle, logue les métriques vers MLflow, sauvegarde **toujours** le modèle
+   dans `models/<model_filename>` (localement, indépendamment de HuggingFace),
+   puis le pousse en plus vers le Hub **si `HF_TOKEN` est présent** — sinon un
+   simple warning est loggé et le modèle reste disponible en local uniquement.
+
+**Historisation des modèles entraînés** : chaque run sauvegarde deux
+copies :
+- `models/<model_filename>` (ex: `model.joblib`) — la version "courante",
+  **écrasée à chaque run**, c'est celle que `predict_model.py` charge par
+  défaut en `source="local"`
+- `models/history/<model_filename_sans_extension>_<AAAAMMJJ_HHMMSS>.joblib`
+  — une copie **datée, jamais écrasée**, pour retrouver n'importe quelle
+  version entraînée précédemment
+
+Si `HF_TOKEN` est présent, la copie historisée est aussi poussée sur le
+Hub sous `history/<nom_du_fichier_daté>`, en plus de la version courante.
+
+⚠️ Ni `models/` ni `models/history/` ne sont persistés au-delà d'un run sur
+l'instance GPU HuggingFace (éphémère) — seul le push vers le Hub (ou S3, si
+tu appliques le même mécanisme que pour `dataset_clean.csv`/`meteo.csv`)
+survit à la fin du job.
+
+**Erreur `PermissionError` sur `models/model.joblib` en local ?** Le plus
+probable : ce fichier a été créé par un précédent `docker compose run`
+(le conteneur tourne en root, donc le fichier appartient à `root` côté
+host via le volume monté). Fix : `sudo chown -R $USER:$USER models/`.
+
+**Chargement du modèle ailleurs (`FeatureEngineer` est une classe custom)** :
+MLflow sérialise par défaut avec `skops` (plus sûr que `pickle`), qui bloque
+tout type non explicitement listé comme fiable — `mlflow.sklearn.log_model()`
+passe donc `skops_trusted_types=["src.models.train.FeatureEngineer", "numpy.dtype"]`
+et `code_paths=["src", "configs"]` (le second car `train.py` lit
+`config.yaml` au niveau module). Sans ces deux paramètres, le chargement du
+modèle échoue ailleurs avec une erreur "untrusted types" ou `FileNotFoundError`.
+Testé avec un vrai round-trip MLflow (log → load → predict) depuis un
+répertoire totalement isolé du projet.
 
 **Secrets requis dans le repo GitHub** (`Settings > Secrets and variables > Actions`) :
 

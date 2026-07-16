@@ -12,6 +12,13 @@ runner GitHub Actions. Les variables d'environnement de ce dernier ne
 sont PAS automatiquement transmises — il faut les passer explicitement
 via les paramètres env= (non-secret) et secrets= (secret, chiffré côté
 serveur HuggingFace) de run_job().
+
+Note : un Job HuggingFace n'a PAS de "repo" -- il reçoit un ID généré
+automatiquement (ex: 687fb701029421ae5549d998) et apparaît sous
+https://huggingface.co/jobs/<namespace>/<job-id>. Le seul paramètre qui
+contrôle sous quel compte le job s'exécute est `namespace` (optionnel,
+par défaut celui du token utilisé) -- pas un `repo_id` à créer au
+préalable.
 """
 
 import os
@@ -22,6 +29,11 @@ from src.config import load_config
 
 CONFIG = load_config()
 HF_TOKEN = os.environ["HF_TOKEN"]
+
+# Optionnel : namespace HuggingFace (organisation) sous lequel lancer le
+# job. Laisser vide/absent pour utiliser le namespace du token (cas
+# normal, compte personnel).
+JOB_NAMESPACE = os.environ.get("HF_JOB_NAMESPACE") or None
 
 # Variables non-secrètes à transmettre à l'instance GPU. Valeur du
 # runner GitHub Actions si définie, sinon repli sur config.yaml.
@@ -45,12 +57,12 @@ job = run_job(
     image=CONFIG["huggingface"]["job_image"],
     command=["bash", "-c", "python -m src.data.make_dataset && python -m src.models.train"],
     flavor=CONFIG["huggingface"]["job_flavor"],
-    repo_id=CONFIG["huggingface"]["job_repo"],
+    namespace=JOB_NAMESPACE,
     env=job_env,
     secrets=job_secrets,
     token=HF_TOKEN,
 )
 
-print(f"Job lancé : {job}")
+print(f"Job lancé : {job.url}")
 print(f"Variables d'environnement transmises : {list(job_env.keys())}")
 print(f"Secrets transmis : {list(job_secrets.keys())}")

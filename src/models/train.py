@@ -3,8 +3,9 @@ Script d'entraînement réel : exécuté SUR l'instance GPU HuggingFace Jobs
 (déclenchée par trigger_job.py).
 
 Contenu :
-- FeatureEngineer : transformer sklearn custom (feature engineering),
-  fait partie du pipeline car doit rester identique train/test/prod.
+- FeatureEngineer (importée depuis feature_engineering.py, voir plus bas) :
+  transformer sklearn custom, fait partie du pipeline car doit rester
+  identique train/test/prod.
 - ColumnTransformer : imputation + scaling + encodage, fit UNIQUEMENT
   sur le train (aucune fuite de données).
 - Pipeline complet : feature engineering + preprocessing + modèle.
@@ -27,10 +28,8 @@ from pathlib import Path
 
 import mlflow
 import mlflow.sklearn
-import numpy as np
 import pandas as pd
 from huggingface_hub import HfApi
-from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
@@ -40,6 +39,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from src.config import load_config
+from src.models.feature_engineering import FeatureEngineer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -73,63 +73,10 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 
 # ---------------------------------------------------------------------------
 # 1. FEATURE ENGINEERING (dans le pipeline, car doit rester identique train/test/prod)
+# FeatureEngineer est définie dans src/models/feature_engineering.py, PAS
+# ici -- nécessaire pour que son __module__ reste stable quel que soit le
+# mode de lancement de train.py (voir le docstring de ce fichier).
 # ---------------------------------------------------------------------------
-class FeatureEngineer(BaseEstimator, TransformerMixin):
-    """
-    Transformer sklearn custom qui crée de nouvelles colonnes à partir des
-    colonnes brutes (déjà nettoyées structurellement, mais pouvant encore
-    contenir des NaN -> ces NaN se propagent naturellement dans les nouvelles
-    colonnes et seront traités par l'imputer du ColumnTransformer en aval).
-
-    Placé dans le pipeline (et non dans make_dataset.py) car :
-    - une future feature pourrait dépendre d'une statistique du train
-      (ex: écart à la moyenne du groupe) et devrait alors être fit sur
-      train uniquement ;
-    - on veut que la même logique s'applique automatiquement à toute
-      nouvelle donnée passée à `predict()`, sans étape manuelle séparée.
-    """
-
-    def fit(self, X, y=None):
-        # Stateless ici (aucune statistique apprise), mais fit() doit exister
-        # et renvoyer self pour être compatible avec l'API sklearn.
-        return self
-
-    def transform(self, X):
-        X = X.copy()
-
-        # a) Feature ratio : revenu par année d'ancienneté
-        anciennete_annees = X["anciennete_mois"] / 12
-        X["revenu_par_annee_anciennete"] = X["revenu"] / anciennete_annees.replace(0, np.nan)
-
-        # b) Feature ratio : revenu par âge (proxy de "revenu précoce")
-        X["revenu_par_age"] = X["revenu"] / X["age"].replace(0, np.nan)
-
-        # c) Feature de bucket : tranche d'âge (catégorielle dérivée d'une numérique)
-        X["tranche_age"] = pd.cut(
-            X["age"],
-            bins=[0, 25, 40, 55, 120],
-            labels=["18-25", "26-40", "41-55", "56+"],
-        ).astype("object")  # object pour laisser l'imputer catégoriel gérer les NaN
-
-        # d) Feature d'interaction : combinaison categorie x region
-        X["categorie_region"] = (
-            X["categorie"].astype(str) + "_" + X["region"].astype(str)
-        )
-
-        # e) Remplacement des divisions par zéro / infinis générés en (a) et (b)
-        X = X.replace([np.inf, -np.inf], np.nan)
-
-        return X
-
-    def get_feature_names_out(self, input_features=None):
-        base = list(input_features) if input_features is not None else []
-        return base + [
-            "revenu_par_annee_anciennete",
-            "revenu_par_age",
-            "tranche_age",
-            "categorie_region",
-        ]
-
 
 def build_model() -> Pipeline:
     """Construit le pipeline complet : feature engineering + preprocessing + modèle."""
@@ -224,7 +171,33 @@ def main():
 
             trained_model, metrics = train(model, X, y)
             mlflow.log_metrics(metrics)
-            mlflow.sklearn.log_model(trained_model, "model")
+            # code_paths embarque src/ ET configs/ : train.py exécute
+            # `CONFIG = load_config()` au niveau module (pour NUMERIC_COLS,
+            # CATEGORICAL_COLS...), donc importer FeatureEngineer ailleurs
+            # nécessite aussi configs/config.yaml, sinon FileNotFoundError
+            # au chargement. config.yaml ne contient aucun secret, l'embarquer
+            # ne pose pas de problème de sécurité.
+            #
+            # FeatureEngineer.__module__ doit rester stable pour que
+            # skops_trusted_types reste valide au chargement ailleurs. Elle
+            # est donc importée depuis feature_engineering.py (jamais
+            # exécuté comme script) plutôt que définie ici : `python -m
+            # src.models.train` donne __name__ == "__main__" à CE fichier
+            # (comportement de Python identique à `python train.py` lancé
+            # directement — la syntaxe -m n'empêche pas ça), ce qui aurait
+            # rendu instable le nom qualifié si la classe avait été définie
+            # directement dans train.py.
+            trusted_feature_engineer = f"{FeatureEngineer.__module__}.FeatureEngineer"
+
+            mlflow.sklearn.log_model(
+                trained_model,
+                "model",
+                code_paths=["src", "configs"],
+                skops_trusted_types=[
+                    trusted_feature_engineer,
+                    "numpy.dtype",
+                ],
+            )
 
         except Exception as e:
             mlflow.log_param("status", "failed")
@@ -232,23 +205,49 @@ def main():
             logger.exception("Échec de l'entraînement")
             raise
 
-        # --- Push du modèle final vers le Hub HuggingFace ---
+        # --- Sauvegarde locale (toujours, indépendamment du push HuggingFace) ---
+        import joblib
+
+        model_filename = CONFIG["paths"]["model_filename"]  # ex: "model.joblib"
+        stem, suffix = model_filename.rsplit(".", 1)  # ex: "model", "joblib"
+
+        # a) Version "courante" -- écrasée à chaque run, c'est celle que
+        #    predict_model.py charge par défaut en source="local".
+        model_dir = Path(CONFIG["paths"]["models"])
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_path = model_dir / model_filename
+        joblib.dump(trained_model, model_path)
+        logger.info("Modèle sauvegardé localement dans %s", model_path)
+
+        # b) Copie historisée et datée -- jamais écrasée, permet de
+        #    retrouver n'importe quelle version entraînée précédemment.
+        history_dir = Path(CONFIG["paths"]["models_history"])
+        history_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+        history_path = history_dir / f"{stem}_{timestamp}.{suffix}"
+        joblib.dump(trained_model, history_path)
+        logger.info("Copie historisée sauvegardée dans %s", history_path)
+
+        # --- Push du modèle vers le Hub HuggingFace (optionnel, si HF_TOKEN présent) ---
         if HF_TOKEN:
-            import joblib
-
-            output_dir = Path("outputs/model")
-            output_dir.mkdir(parents=True, exist_ok=True)
-            joblib.dump(trained_model, output_dir / CONFIG["paths"]["model_filename"])
-
             api = HfApi(token=HF_TOKEN)
-            api.upload_folder(
-                folder_path=str(output_dir),
+            api.upload_file(
+                path_or_fileobj=str(model_path),
+                path_in_repo=model_filename,
                 repo_id=HF_MODEL_REPO,
                 repo_type="model",
             )
-            logger.info("Modèle poussé vers %s", HF_MODEL_REPO)
+            # Copie historisée également poussée sur le Hub, sous history/,
+            # pour garder la trace des versions même côté HuggingFace.
+            api.upload_file(
+                path_or_fileobj=str(history_path),
+                path_in_repo=f"history/{history_path.name}",
+                repo_id=HF_MODEL_REPO,
+                repo_type="model",
+            )
+            logger.info("Modèle poussé vers %s (+ copie historisée)", HF_MODEL_REPO)
         else:
-            logger.warning("HF_TOKEN absent : le modèle n'a pas été poussé sur le Hub.")
+            logger.warning("HF_TOKEN absent : le modèle n'a pas été poussé sur le Hub (reste disponible en local).")
 
 
 if __name__ == "__main__":
