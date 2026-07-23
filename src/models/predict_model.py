@@ -53,8 +53,11 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 def load_model(source: str = "hub", model_path: Path = MODEL_DIR):
     """
     Charge le modèle entraîné.
-    - source="hub"   : télécharge le modèle depuis HF_MODEL_REPO
-    - source="local" : charge depuis models/<model_filename>
+    - source="hub"    : télécharge le modèle depuis HF_MODEL_REPO
+    - source="local"  : charge depuis models/<model_filename>
+    - source="mlflow" : charge depuis le Model Registry MLflow, via
+      l'alias configuré (même mécanisme que src/api/model_loader.py --
+      voir configs/config.yaml, section mlflow.registered_model_name/model_alias)
     """
     if source == "hub":
         logger.info("Téléchargement du modèle depuis %s", HF_MODEL_REPO)
@@ -63,14 +66,28 @@ def load_model(source: str = "hub", model_path: Path = MODEL_DIR):
             filename=MODEL_FILENAME,
             token=HF_TOKEN,
         )
+        return joblib.load(model_file)
+
     elif source == "local":
         model_file = model_path / MODEL_FILENAME
         if not model_file.exists():
             raise FileNotFoundError(f"{model_file} introuvable.")
-    else:
-        raise ValueError(f"source inconnue : {source!r} (attendu 'hub' ou 'local')")
+        return joblib.load(model_file)
 
-    return joblib.load(model_file)
+    elif source == "mlflow":
+        import mlflow.sklearn
+
+        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI") or CONFIG["mlflow"]["default_tracking_uri"]
+        mlflow.set_tracking_uri(tracking_uri)
+
+        registered_name = CONFIG["mlflow"]["registered_model_name"]
+        alias = CONFIG["mlflow"]["model_alias"]
+        model_uri = f"models:/{registered_name}@{alias}"
+        logger.info("Chargement du modèle depuis MLflow : %s", model_uri)
+        return mlflow.sklearn.load_model(model_uri)
+
+    else:
+        raise ValueError(f"source inconnue : {source!r} (attendu 'hub', 'local' ou 'mlflow')")
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +188,7 @@ def save_predictions(df: pd.DataFrame, output_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Génère des prédictions sur des données fraîches.")
-    parser.add_argument("--source", choices=["local", "hub"], default="hub", help="Origine du modèle")
+    parser.add_argument("--source", choices=["local", "hub", "mlflow"], default="hub", help="Origine du modèle")
     parser.add_argument("--input", type=Path, default=None, help="Fichier de données fraîches à prédire")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Fichier de sortie")
     args = parser.parse_args()

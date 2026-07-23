@@ -278,6 +278,14 @@ make streamlit     # démarre l'interface sur http://localhost:8501, dans un aut
 docker compose up api streamlit
 ```
 
+L'API expose un `healthcheck` (`GET /health`), et `streamlit` attend
+explicitement que l'API soit **prête** (`condition: service_healthy`)
+avant de démarrer — pas juste que son conteneur ait été lancé. Sans ça,
+`depends_on` seul garantit uniquement l'ordre de démarrage des
+conteneurs, pas que le serveur `uvicorn` à l'intérieur ait fini de
+charger le modèle : Streamlit pouvait alors afficher `Connection refused`
+sur son premier appel, avant que l'API soit réellement joignable.
+
 ### Endpoints
 
 | Méthode | Route | Description |
@@ -333,9 +341,16 @@ sur le runner GitHub Actions (CPU), sans passer par HuggingFace Jobs.
 
 ```bash
 make predict INPUT=data/examples/sample_input.csv
-# ou directement :
+# ou directement, avec le choix de la source du modèle :
 python -m src.models.predict_model --source local --input data/examples/sample_input.csv
+python -m src.models.predict_model --source hub --input data/examples/sample_input.csv
+python -m src.models.predict_model --source mlflow --input data/examples/sample_input.csv
 ```
+
+`--source` accepte `local` (`models/<model_filename>`), `hub` (Hub
+HuggingFace, `HF_MODEL_REPO`) ou `mlflow` (Model Registry MLflow, via
+`mlflow.registered_model_name`/`model_alias` — même mécanisme que l'API,
+voir `src/api/model_loader.py`). Par défaut : `hub`.
 
 `data/examples/sample_input.csv` contient uniquement les colonnes brutes
 (`age`, `revenu`, `anciennete_mois`, `categorie`, `region`) — un `date`

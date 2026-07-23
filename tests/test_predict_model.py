@@ -48,6 +48,19 @@ def test_load_model_source_invalide_leve_value_error():
         load_model(source="invalide")
 
 
+def test_load_model_mlflow_utilise_lalias_configure():
+    """Vérifie que l'URI construite pour MLflow suit bien le format models:/<nom>@<alias>."""
+    with patch("mlflow.set_tracking_uri") as mock_set_uri, \
+         patch("mlflow.sklearn.load_model") as mock_load:
+        mock_load.return_value = "modele_factice"
+        result = load_model(source="mlflow")
+
+    assert result == "modele_factice"
+    mock_set_uri.assert_called_once()
+    args, _ = mock_load.call_args
+    assert args[0] == "models:/mon-projet-ml@champion"
+
+
 def test_predict_ajoute_prediction_et_probabilite(trained_model, X_y):
     X, _ = X_y
     result = predict(trained_model, X.head(3))

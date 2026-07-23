@@ -14,6 +14,7 @@ Documentation interactive une fois lancée : http://localhost:8000/docs
 """
 
 import logging
+from contextlib import asynccontextmanager
 from typing import Dict, Tuple
 
 import pandas as pd
@@ -33,10 +34,31 @@ from src.data.make_dataset import fetch_weather_for_region
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Remplace l'ancien @app.on_event("startup") (déprécié). Le code avant
+    le `yield` s'exécute au démarrage, celui après à l'arrêt -- ici on
+    n'a besoin que du démarrage.
+
+    Tente de précharger le modèle pour un premier appel rapide. Un échec
+    ici n'empêche pas l'API de démarrer — /predict retentera le
+    chargement à la volée (et remontera une erreur 503 explicite si la
+    source est réellement indisponible).
+    """
+    try:
+        load_model()
+    except Exception as e:
+        logger.warning("Préchargement du modèle échoué au démarrage : %s", e)
+
+    yield  # l'API tourne ici -- rien à faire à l'arrêt pour ce projet
+
+
 app = FastAPI(
     title="Mon Projet ML — API d'inférence",
     description="Sert les prédictions du modèle entraîné (source configurable : local, S3, MLflow).",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Cache mémoire (région, date) -> météo, pour éviter de re-fetcher la même
@@ -78,20 +100,6 @@ def _enrich_with_weather(observation: Observation) -> dict:
     date = observation.date or pd.Timestamp.now().strftime("%Y-%m-%d")
     weather = _get_weather(observation.region, date)
     return {**observation.model_dump(exclude={"date"}), **weather}
-
-
-@app.on_event("startup")
-def on_startup():
-    """
-    Tente de précharger le modèle au démarrage pour un premier appel
-    rapide. Un échec ici n'empêche pas l'API de démarrer — /predict
-    retentera le chargement à la volée (et remontera une erreur 503
-    explicite si la source est réellement indisponible).
-    """
-    try:
-        load_model()
-    except Exception as e:
-        logger.warning("Préchargement du modèle échoué au démarrage : %s", e)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["monitoring"])
